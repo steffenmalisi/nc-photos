@@ -105,6 +105,7 @@ dependencies:
   wakelock: ^0.6.2
   woozy_search: ^2.0.3
   xml: ^6.1.0
+  webview_flutter: ^3.0.4
 
 dependency_overrides:
   video_player_android:

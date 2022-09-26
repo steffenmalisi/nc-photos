@@ -90,33 +90,6 @@ class _SignInState extends State<SignIn> {
                             child: _buildForm(context),
                           ),
                         ),
-                        Container(
-                          alignment: AlignmentDirectional.centerStart,
-                          constraints: const BoxConstraints(
-                              maxWidth: AppTheme.widthLimitedContentMaxWidth),
-                          padding: const EdgeInsets.symmetric(horizontal: 16),
-                          child: InkWell(
-                            onTap: () {
-                              launch(help_utils.twoFactorAuthUrl);
-                            },
-                            child: Padding(
-                              padding: const EdgeInsets.symmetric(
-                                  horizontal: 16, vertical: 16),
-                              child: Row(
-                                mainAxisSize: MainAxisSize.max,
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  const Icon(Icons.help_outline, size: 16),
-                                  const SizedBox(width: 4),
-                                  Expanded(
-                                    child:
-                                        Text(L10n.global().signIn2faHintText),
-                                  ),
-                                ],
-                              ),
-                            ),
-                          ),
-                        ),
                         if (!platform_k.isWeb) Expanded(child: Container()),
                         Container(
                           constraints: const BoxConstraints(
@@ -219,55 +192,18 @@ class _SignInState extends State<SignIn> {
             ),
           ],
         ),
-        const SizedBox(height: 8),
-        TextFormField(
-          decoration: InputDecoration(
-            hintText: L10n.global().usernameInputHint,
-          ),
-          validator: (value) {
-            if (value!.trim().isEmpty) {
-              return L10n.global().usernameInputInvalidEmpty;
-            }
-            return null;
-          },
-          onSaved: (value) {
-            _formValue.username = value!;
-          },
-        ),
-        const SizedBox(height: 8),
-        TextFormField(
-          decoration: InputDecoration(
-            hintText: L10n.global().passwordInputHint,
-          ),
-          obscureText: true,
-          validator: (value) {
-            if (value!.trim().isEmpty) {
-              return L10n.global().passwordInputInvalidEmpty;
-            }
-            return null;
-          },
-          onSaved: (value) {
-            _formValue.password = value!;
-          },
-        ),
       ],
     );
   }
 
   Future<void> _connect() async {
     _formKey.currentState!.save();
-    Account? account = Account(
-      Account.newId(),
-      _formValue.scheme,
-      _formValue.address,
-      _formValue.username.toCi(),
-      _formValue.username,
-      _formValue.password,
-      [""],
-    );
-    _log.info("[_connect] Try connecting with account: $account");
-    account = await Navigator.pushNamed<Account>(context, Connect.routeName,
-        arguments: ConnectArguments(account));
+
+    Uri url = Uri(scheme: _formValue.scheme, host: _formValue.address);
+
+    _log.info("[_connect] Try connecting with url: $url");
+    Account? account = await Navigator.pushNamed<Account>(context, Connect.routeName,
+        arguments: ConnectArguments(url));
     if (account == null) {
       // connection failed
       return;
@@ -347,6 +283,4 @@ extension on _Scheme {
 class _FormValue {
   late String scheme;
   late String address;
-  late String username;
-  late String password;
 }

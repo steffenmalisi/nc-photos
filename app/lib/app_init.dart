@@ -35,8 +35,6 @@ import 'package:nc_photos/mobile/android/activity.dart';
 import 'package:nc_photos/mobile/android/android_info.dart';
 import 'package:nc_photos/mobile/platform.dart'
     if (dart.library.html) 'package:nc_photos/web/platform.dart' as platform;
-import 'package:nc_photos/mobile/self_signed_cert_manager.dart';
-import 'package:nc_photos/platform/features.dart' as features;
 import 'package:nc_photos/platform/k.dart' as platform_k;
 import 'package:nc_photos/pref.dart';
 import 'package:nc_photos/pref_util.dart' as pref_util;
@@ -68,9 +66,7 @@ Future<void> init(InitIsolateType isolateType) async {
   await _initPref();
   await _initAccountPrefs();
   _initEquatable();
-  if (features.isSupportSelfSignedCert) {
-    _initSelfSignedCertManager();
-  }
+
   await _initDiContainer(isolateType);
   _initVisibilityDetector();
 
@@ -185,10 +181,6 @@ void _initKiwi() {
 
 void _initEquatable() {
   EquatableConfig.stringify = false;
-}
-
-void _initSelfSignedCertManager() {
-  SelfSignedCertManager().init();
 }
 
 Future<void> _initDiContainer(InitIsolateType isolateType) async {

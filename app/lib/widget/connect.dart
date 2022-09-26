@@ -1,12 +1,8 @@
-import 'dart:io';
-
 import 'package:flutter/material.dart';
-import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:kiwi/kiwi.dart';
 import 'package:logging/logging.dart';
 import 'package:nc_photos/account.dart';
 import 'package:nc_photos/app_localizations.dart';
-import 'package:nc_photos/bloc/app_password_exchange.dart';
 import 'package:nc_photos/ci_string.dart';
 import 'package:nc_photos/di_container.dart';
 import 'package:nc_photos/entity/file_util.dart' as file_util;
@@ -14,18 +10,17 @@ import 'package:nc_photos/exception.dart';
 import 'package:nc_photos/exception_util.dart' as exception_util;
 import 'package:nc_photos/help_utils.dart' as help_util;
 import 'package:nc_photos/k.dart' as k;
-import 'package:nc_photos/mobile/self_signed_cert_manager.dart';
-import 'package:nc_photos/platform/features.dart' as features;
 import 'package:nc_photos/snack_bar_manager.dart';
 import 'package:nc_photos/string_extension.dart';
 import 'package:nc_photos/theme.dart';
 import 'package:nc_photos/url_launcher_util.dart';
 import 'package:nc_photos/use_case/ls_single_file.dart';
+import 'package:webview_flutter/webview_flutter.dart';
 
 class ConnectArguments {
-  ConnectArguments(this.account);
+  ConnectArguments(this.url);
 
-  final Account account;
+  final Uri url;
 }
 
 class Connect extends StatefulWidget {
@@ -37,160 +32,95 @@ class Connect extends StatefulWidget {
 
   const Connect({
     Key? key,
-    required this.account,
+    required this.url,
   }) : super(key: key);
 
   Connect.fromArgs(ConnectArguments args, {Key? key})
       : this(
           key: key,
-          account: args.account,
+          url: args.url,
         );
 
   @override
   createState() => _ConnectState();
 
-  final Account account;
+  final Uri url;
 }
 
 class _ConnectState extends State<Connect> {
+  final _key = UniqueKey();
+
   @override
   initState() {
     super.initState();
-    _initBloc();
   }
 
   @override
   build(BuildContext context) {
     return AppTheme(
       child: Scaffold(
-        body:
-            BlocListener<AppPasswordExchangeBloc, AppPasswordExchangeBlocState>(
-          bloc: _bloc,
-          listener: (context, state) => _onStateChange(context, state),
-          child: Builder(builder: (context) => _buildContent(context)),
-        ),
+        body: Builder(builder: (context) => _buildContent(context)),
       ),
     );
-  }
-
-  void _initBloc() {
-    _log.info("[_initBloc] Initialize bloc");
-    _connect();
   }
 
   Widget _buildContent(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 16),
-      child: Center(
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.center,
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(
-              Icons.cloud,
-              size: 128,
-              color: Theme.of(context).colorScheme.primary,
-            ),
-            Text(
-              L10n.global().connectingToServer(widget.account.url),
-              textAlign: TextAlign.center,
-              style: Theme.of(context).textTheme.headline6,
-            )
-          ],
-        ),
-      ),
+    return Column(
+      children: [
+        Expanded(
+            child: WebView(
+                key: _key,
+                userAgent: 'nc-photos',
+                javascriptMode: JavascriptMode.unrestricted,
+                onWebViewCreated: (WebViewController webViewController) {
+                  Map<String, String> headers = {
+                    "OCS-APIREQUEST": "true",
+                    "ACCEPT_LANGUAGE": "de",
+                  };
+                  webViewController.loadUrl(
+                      "${widget.url}/index.php/login/flow",
+                      headers: headers);
+                },
+                navigationDelegate: (NavigationRequest request) {
+                  if (request.url.startsWith('nc://login/')) {
+                    _onCredentialsReceived(request.url);
+                    return NavigationDecision.prevent;
+                  }
+                  return NavigationDecision.navigate;
+                }))
+      ],
     );
   }
 
-  void _onStateChange(
-      BuildContext context, AppPasswordExchangeBlocState state) {
-    if (state is AppPasswordExchangeBlocSuccess) {
-      final newAccount = widget.account.copyWith(password: state.password);
-      _log.info("[_onStateChange] Password exchanged: $newAccount");
-      _checkWebDavUrl(context, newAccount);
-    } else if (state is AppPasswordExchangeBlocFailure) {
-      if (features.isSupportSelfSignedCert &&
-          state.exception is HandshakeException) {
-        _onSelfSignedCert(context);
-      } else if (state.exception is ApiException &&
-          (state.exception as ApiException).response.statusCode == 401) {
-        SnackBarManager().showSnackBar(SnackBar(
-          content: Text(L10n.global().errorWrongPassword),
-          duration: k.snackBarDurationNormal,
-        ));
-        Navigator.of(context).pop(null);
-      } else {
-        SnackBarManager().showSnackBar(SnackBar(
-          content: Text(exception_util.toUserString(state.exception)),
-          duration: k.snackBarDurationNormal,
-        ));
-        Navigator.of(context).pop(null);
-      }
+  static final _log = Logger("widget.connect._ConnectState");
+
+  void _onCredentialsReceived(String url) {
+    _log.info("[_onCredentialsReceived] App credentials received");
+    final callbackUrlRegex =
+        RegExp(r'nc:\/\/login\/server:([^&]+)&user:([^&]+)&password:(.*)');
+    final match = callbackUrlRegex.firstMatch(url);
+    if (match == null) {
+      _log.shout(
+          "[_onCredentialsReceived] callbackUrlRegex does not match url: $url");
+      SnackBarManager().showSnackBar(SnackBar(
+        content: Text(exception_util.toUserString(null)),
+        duration: k.snackBarDurationNormal,
+      ));
+      Navigator.of(context).pop(null);
+      return;
     }
-  }
+    final newAccount = Account(
+        Account.newId(),
+        widget.url.scheme,
+        widget.url.host,
+        match.group(2).toString().toCi(),
+        match.group(2)!,
+        match.group(3)!,
+        [""]);
 
-  void _onSelfSignedCert(BuildContext context) {
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: Text(L10n.global().serverCertErrorDialogTitle),
-        content: Text(L10n.global().serverCertErrorDialogContent),
-        actions: <Widget>[
-          TextButton(
-            onPressed: () {
-              Navigator.of(context).pop();
-            },
-            child: Text(MaterialLocalizations.of(context).closeButtonLabel),
-          ),
-          TextButton(
-            onPressed: () {
-              Navigator.of(context).pop(true);
-            },
-            child: Text(L10n.global().advancedButtonLabel),
-          ),
-        ],
-      ),
-    ).then((value) {
-      if (value != true) {
-        Navigator.of(context).pop(null);
-        return;
-      }
-      showDialog(
-        context: context,
-        builder: (context) => AlertDialog(
-          title: Text(L10n.global().whitelistCertDialogTitle),
-          content: Text(L10n.global().whitelistCertDialogContent(
-              SelfSignedCertManager().getLastBadCertHost(),
-              SelfSignedCertManager().getLastBadCertFingerprint())),
-          actions: <Widget>[
-            TextButton(
-              onPressed: () {
-                Navigator.of(context).pop();
-              },
-              child: Text(MaterialLocalizations.of(context).cancelButtonLabel),
-            ),
-            TextButton(
-              onPressed: () {
-                Navigator.of(context).pop(true);
-              },
-              child: Text(L10n.global().whitelistCertButtonLabel),
-            ),
-          ],
-        ),
-      ).then((value) {
-        if (value != true) {
-          Navigator.of(context).pop(null);
-          return;
-        }
-        SelfSignedCertManager().whitelistLastBadCert().then((value) {
-          Navigator.of(context).pop(null);
-        });
-      });
-    });
-  }
+    _log.fine("[_onCredentialsReceived] This is the new account: $newAccount");
 
-  void _connect() {
-    _bloc.add(AppPasswordExchangeBlocConnect(widget.account));
+    _checkWebDavUrl(context, newAccount);
   }
 
   Future<void> _onCheckWebDavUrlFailed(
@@ -242,10 +172,6 @@ class _ConnectState extends State<Connect> {
       builder: (context) => _WebDavUrlDialog(account: account),
     );
   }
-
-  final _bloc = AppPasswordExchangeBloc();
-
-  static final _log = Logger("widget.connect._ConnectState");
 }
 
 class _WebDavUrlDialog extends StatefulWidget {
